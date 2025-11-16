@@ -19,62 +19,62 @@ BASE_URL = f"https://www.{BASE_DOMAIN}"
 
 # slug -> {name (insan okunur), url (listing)}
 CATEGORIES: Dict[str, Dict[str, str]] = {
-    # "gundem": {
-    #     "name": "GÜNDEM",
-    #     "url": f"{BASE_URL}/gundem",
-    # },
-    # "politika": {
-    #     "name": "POLİTİKA",
-    #     "url": f"{BASE_URL}/politika",
-    # },
-    # "ekonomi": {
-    #     "name": "EKONOMİ",
-    #     "url": f"{BASE_URL}/ekonomi",
-    # },
-    # "dunya": {
-    #     "name": "DÜNYA",
-    #     "url": f"{BASE_URL}/dunya",
-    # },
-    # "asayis": {
-    #     "name": "ASAYİŞ",
-    #     "url": f"{BASE_URL}/asayis",
-    # },
-    # "spor": {
-    #     "name": "SPOR",
-    #     "url": f"{BASE_URL}/spor",
-    # },
-    # "aktuel": {
-    #     "name": "AKTÜEL",
-    #     "url": f"{BASE_URL}/aktuel",
-    # },
-    # "saglik": {
-    #     "name": "SAĞLIK",
-    #     "url": f"{BASE_URL}/saglik",
-    # },
-    # "cevre": {
-    #     "name": "ÇEVRE",
-    #     "url": f"{BASE_URL}/cevre",
-    # },
-    # "magazin": {
-    #     "name": "MAGAZİN",
-    #     "url": f"{BASE_URL}/magazin",
-    # },
-    # "kultur_sanat": {
-    #     "name": "KÜLTÜR SANAT",
-    #     "url": f"{BASE_URL}/kultur-sanat",
-    # },
-    # "egitim": {
-    #     "name": "EĞİTİM",
-    #     "url": f"{BASE_URL}/egitim",
-    # },
-    # "teknoloji": {
-    #     "name": "TEKNOLOJİ",
-    #     "url": f"{BASE_URL}/teknoloji",
-    # },
-    # "yerel": {
-    #     "name": "YEREL",
-    #     "url": f"{BASE_URL}/yerel",
-    # },
+    "gundem": {
+        "name": "GÜNDEM",
+        "url": f"{BASE_URL}/gundem",
+    },
+    "politika": {
+        "name": "POLİTİKA",
+        "url": f"{BASE_URL}/politika",
+    },
+    "ekonomi": {
+        "name": "EKONOMİ",
+        "url": f"{BASE_URL}/ekonomi",
+    },
+    "dunya": {
+        "name": "DÜNYA",
+        "url": f"{BASE_URL}/dunya",
+    },
+    "asayis": {
+        "name": "ASAYİŞ",
+        "url": f"{BASE_URL}/asayis",
+    },
+    "spor": {
+        "name": "SPOR",
+        "url": f"{BASE_URL}/spor",
+    },
+    "aktuel": {
+        "name": "AKTÜEL",
+        "url": f"{BASE_URL}/aktuel",
+    },
+    "saglik": {
+        "name": "SAĞLIK",
+        "url": f"{BASE_URL}/saglik",
+    },
+    "cevre": {
+        "name": "ÇEVRE",
+        "url": f"{BASE_URL}/cevre",
+    },
+    "magazin": {
+        "name": "MAGAZİN",
+        "url": f"{BASE_URL}/magazin",
+    },
+    "kultur_sanat": {
+        "name": "KÜLTÜR SANAT",
+        "url": f"{BASE_URL}/kultur-sanat",
+    },
+    "egitim": {
+        "name": "EĞİTİM",
+        "url": f"{BASE_URL}/egitim",
+    },
+    "teknoloji": {
+        "name": "TEKNOLOJİ",
+        "url": f"{BASE_URL}/teknoloji",
+    },
+    "yerel": {
+        "name": "YEREL",
+        "url": f"{BASE_URL}/yerel",
+    },
     "video": {
         "name": "VIDEO", 
         "url": f"{BASE_URL}/video"},
@@ -156,63 +156,91 @@ def is_layout_asset(url: str) -> bool:
     return False
 
 
-def extract_media_links(soup: BeautifulSoup) -> List[str]:
+def extract_media_links(soup: BeautifulSoup, only_videos: bool = False) -> List[str]:
     """
     Haber sayfasındaki görsel + video linklerini toplar.
-    Önce main/article içinde arar, yoksa tüm sayfaya bakar.
+
+    - Eğer only_videos=False:
+        img + video + iframe + script içindeki tüm URL'leri (resim + video) toplar.
+    - Eğer only_videos=True:
+        SADECE video linkleri (mp4/m3u8/webm) toplanır; img'ler tamamen ignore edilir.
     """
     root = soup.find("main") or soup.find("article") or soup
 
     media: List[str] = []
     seen: Set[str] = set()
 
-    # IMG
-    for img in root.find_all("img"):
-        src = img.get("data-src") or img.get("src")
-        if not src:
-            continue
-        url = normalize_media_url(src)
+    def add_url(raw: str):
+        url = normalize_media_url(raw)
         if not url:
-            continue
-        if is_layout_asset(url):
-            continue
-        if not looks_like_image(url):
-            continue
+            return
+        # video-only modda: görüntü değil, sadece video uzantılı URL'leri al
+        if only_videos and not looks_like_video(url):
+            return
         if url in seen:
-            continue
+            return
         seen.add(url)
         media.append(url)
 
-    # VIDEO + SOURCE
+    # 1) IMG
+    for img in root.find_all("img"):
+        if only_videos:
+            # video kategorisinde img istemiyoruz
+            continue
+        src = img.get("data-src") or img.get("src")
+        if not src:
+            continue
+        if not looks_like_image(src) and not looks_like_video(src):
+            continue
+        add_url(src)
+
+    # 2) VIDEO + SOURCE
     for video in root.find_all("video"):
         vsrc = video.get("src")
-        if vsrc:
-            url = normalize_media_url(vsrc)
-            if looks_like_video(url) and url not in seen:
-                seen.add(url)
-                media.append(url)
+        if vsrc and looks_like_video(vsrc):
+            add_url(vsrc)
 
         for source in video.find_all("source"):
             ssrc = source.get("src")
-            if not ssrc:
-                continue
-            url = normalize_media_url(ssrc)
-            if looks_like_video(url) and url not in seen:
-                seen.add(url)
-                media.append(url)
+            if ssrc and looks_like_video(ssrc):
+                add_url(ssrc)
 
-    # IFRAMES (gömülü player'lar)
+    # 3) IFRAMES (gömülü player'lar)
     for iframe in root.find_all("iframe"):
         isrc = iframe.get("src")
         if not isrc:
             continue
-        url = normalize_media_url(isrc)
-        if is_layout_asset(url):
+        # iframe'den video almak istiyorsak:
+        if looks_like_video(isrc) or "player" in isrc.lower() or "embed" in isrc.lower():
+            add_url(isrc)
+
+    # 4) Tüm tag attribute'ları tarayarak video URL yakala
+    for tag in root.find_all(True):
+        for attr, val in tag.attrs.items():
+            if isinstance(val, list):
+                vals = val
+            else:
+                vals = [val]
+
+            for v in vals:
+                if not isinstance(v, str):
+                    continue
+                # video uzantısı içeriyorsa
+                if ".mp4" in v or ".m3u8" in v or ".webm" in v:
+                    add_url(v)
+
+    # 5) <script> içeriklerinden video URL çıkarmaya çalış
+    video_pattern = re.compile(
+        r"https?://[^\s\"']+\.(mp4|m3u8|webm)\b",
+        re.IGNORECASE,
+    )
+
+    for script in soup.find_all("script"):
+        text = script.string or script.get_text()
+        if not text:
             continue
-        if looks_like_video(url) or "player" in url.lower() or "embed" in url.lower():
-            if url not in seen:
-                seen.add(url)
-                media.append(url)
+        for m in video_pattern.finditer(text):
+            add_url(m.group(0))
 
     return media
 
@@ -353,8 +381,16 @@ def parse_article(url: str, soup: BeautifulSoup) -> Dict[str, str]:
 
     body = "\n\n".join(body_texts)
 
-    # Medya linkleri (resim + video)
-    media_links = extract_media_links(soup)
+    # Bu sayfa bir video detayı mı?
+    try:
+        parsed = urlparse(url)
+        path = (parsed.path or "").strip("/")
+    except Exception:
+        path = ""
+    is_video_page = path.startswith("video")  # örn: 'video-diyarbakirda-...'
+
+    # Medya linkleri
+    media_links = extract_media_links(soup, only_videos=is_video_page)
 
     return {
         "url": url,
