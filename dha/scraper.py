@@ -22,6 +22,8 @@ CATEGORIES: Dict[str, str] = {
     "yerel-haberler": "Yerel Haberler",
     "saglik-yasam": "Sağlık-Yaşam",
     "kultur-sanat": "Kültür Sanat",
+    "foto-galeri": "Foto Galeri",
+    "video": "Video",
 }
 
 # Basit config (ENV’den override edebilirsin)
@@ -49,38 +51,52 @@ def fetch(url: str) -> Optional[str]:
     except Exception as e:
         print(f"[ERROR] fetch failed {url}: {e}")
         return None
-
+    
 
 def extract_article_links(html: str, category_slug: str) -> List[str]:
     """
     Kategori listing HTML’inden haber linklerini çıkarır.
-    - son-dakika: her kategoriden son dakika haberleri; slug’a göre değil, genel pattern’e göre bakıyoruz
-    - diğerleri: /{kategori_slug}/... pattern’i
+    - son-dakika: genel pattern
+    - foto-galeri: sadece /foto-galeri/... linkleri
+    - video: sadece /video/... linkleri
+    - diğerleri: /{kategori_slug}/... linkleri, galeri linkleri hariç
     """
     links: List[str] = []
 
     if category_slug == "son-dakika":
-        # /...-123456 gibi biten haber linklerini yakala
+        # /...-123456 gibi biten haber linkleri
         pattern = re.compile(r'href="(/[^"]+?-\\d+)"')
+    elif category_slug in {"foto-galeri", "video"}:
+        # sadece ilgili galeri tipini yakala
+        pattern = re.compile(r'href="(/%s/[^"#]+)"' % re.escape(category_slug))
     else:
-        # Örn: /gundem/... /spor/...
+        # klasik metin haber kategorileri
         pattern = re.compile(r'href="(/%s/[^"]+)"' % re.escape(category_slug))
 
     for m in pattern.finditer(html):
         href = m.group(1)
-        # Foto / video galeri, vb. ele (sadece klasik yazılı haber istiyoruz)
-        if "/foto-galeri/" in href or "/video/" in href or "/galeri/" in href:
+
+        # javascript vs içeren sahte linkleri atla
+        if "javascript:" in href:
             continue
+
+        # ❗ Normal kategorilerde hâlâ galeri linklerini atlıyoruz,
+        # ama foto-galeri ve video kategorilerinde asla atlamıyoruz.
+        if category_slug not in {"foto-galeri", "video"}:
+            if "/foto-galeri/" in href or "/video/" in href or "/galeri/" in href:
+                continue
+
         full = BASE_URL + href
         links.append(full)
 
     # Sıralamayı koruyarak duplicate temizle
-    seen = set()
-    deduped = []
+    seen: Set[str] = set()
+    deduped: List[str] = []
     for u in links:
         if u not in seen:
             seen.add(u)
             deduped.append(u)
+
     return deduped
 
 
