@@ -37,7 +37,6 @@ session.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; dha-scraper/1.0; +https://example.com)"
 })
 
-category_seen_keys: Set[str] = set()
 
 
 def fetch(url: str) -> Optional[str]:
@@ -167,10 +166,9 @@ def extract_media_links(soup: BeautifulSoup) -> List[str]:
             continue
 
         key = canonical_media_key(url)
-        if key in seen_keys or key in category_seen_keys:
+        if key in seen_keys:
             continue
 
-        category_seen_keys.add(key)
         seen_keys.add(key)
         media.append(url)
 
@@ -181,9 +179,8 @@ def extract_media_links(soup: BeautifulSoup) -> List[str]:
             url = normalize_url(vsrc)
             if looks_like_video(url):
                 key = canonical_media_key(url)
-                if key not in seen_keys and key not in category_seen_keys:
+                if key not in seen_keys:
                     seen_keys.add(key)
-                    category_seen_keys.add(key)
                     media.append(url)
 
         for source in video.find_all("source"):
@@ -194,10 +191,9 @@ def extract_media_links(soup: BeautifulSoup) -> List[str]:
             if not looks_like_video(url):
                 continue
             key = canonical_media_key(url)
-            if key in seen_keys or key in category_seen_keys:
+            if key in seen_keys:
                 continue
         
-            category_seen_keys.add(key)
             seen_keys.add(key)
             media.append(url)
 
@@ -210,10 +206,9 @@ def extract_media_links(soup: BeautifulSoup) -> List[str]:
         # eğer video player / embed ise tutmak isteyebilirsin
         if looks_like_video(url) or "player" in url.lower() or "embed" in url.lower():
             key = canonical_media_key(url)
-            if key in seen_keys or key in category_seen_keys:
+            if key in seen_keys:
                 continue
             seen_keys.add(key)
-            category_seen_keys.add(key)
             media.append(url)
 
     return media
@@ -257,11 +252,11 @@ def parse_article(url: str, html: str, category_slug: str) -> Dict[str, object]:
     media_links = extract_media_links(soup)
 
     return {
-        "url": url,
-        "title": title,
         "category": category,
         "category_slug": category_slug,
         "date_time": date_time,
+        "url": url,
+        "title": title,        
         "city": city,
         "body": body,
         "media_links": media_links,
