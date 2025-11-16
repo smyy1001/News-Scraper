@@ -19,62 +19,68 @@ BASE_URL = f"https://www.{BASE_DOMAIN}"
 
 # slug -> {name (insan okunur), url (listing)}
 CATEGORIES: Dict[str, Dict[str, str]] = {
-    "gundem": {
-        "name": "GÜNDEM",
-        "url": f"{BASE_URL}/gundem",
-    },
-    "politika": {
-        "name": "POLİTİKA",
-        "url": f"{BASE_URL}/politika",
-    },
-    "ekonomi": {
-        "name": "EKONOMİ",
-        "url": f"{BASE_URL}/ekonomi",
-    },
-    "dunya": {
-        "name": "DÜNYA",
-        "url": f"{BASE_URL}/dunya",
-    },
-    "asayis": {
-        "name": "ASAYİŞ",
-        "url": f"{BASE_URL}/asayis",
-    },
-    "spor": {
-        "name": "SPOR",
-        "url": f"{BASE_URL}/spor",
-    },
-    "aktuel": {
-        "name": "AKTÜEL",
-        "url": f"{BASE_URL}/aktuel",
-    },
-    "saglik": {
-        "name": "SAĞLIK",
-        "url": f"{BASE_URL}/saglik",
-    },
-    "cevre": {
-        "name": "ÇEVRE",
-        "url": f"{BASE_URL}/cevre",
-    },
-    "magazin": {
-        "name": "MAGAZİN",
-        "url": f"{BASE_URL}/magazin",
-    },
-    "kultur_sanat": {
-        "name": "KÜLTÜR SANAT",
-        "url": f"{BASE_URL}/kultur-sanat",
-    },
-    "egitim": {
-        "name": "EĞİTİM",
-        "url": f"{BASE_URL}/egitim",
-    },
-    "teknoloji": {
-        "name": "TEKNOLOJİ",
-        "url": f"{BASE_URL}/teknoloji",
-    },
-    "yerel": {
-        "name": "YEREL",
-        "url": f"{BASE_URL}/yerel",
-    },
+    # "gundem": {
+    #     "name": "GÜNDEM",
+    #     "url": f"{BASE_URL}/gundem",
+    # },
+    # "politika": {
+    #     "name": "POLİTİKA",
+    #     "url": f"{BASE_URL}/politika",
+    # },
+    # "ekonomi": {
+    #     "name": "EKONOMİ",
+    #     "url": f"{BASE_URL}/ekonomi",
+    # },
+    # "dunya": {
+    #     "name": "DÜNYA",
+    #     "url": f"{BASE_URL}/dunya",
+    # },
+    # "asayis": {
+    #     "name": "ASAYİŞ",
+    #     "url": f"{BASE_URL}/asayis",
+    # },
+    # "spor": {
+    #     "name": "SPOR",
+    #     "url": f"{BASE_URL}/spor",
+    # },
+    # "aktuel": {
+    #     "name": "AKTÜEL",
+    #     "url": f"{BASE_URL}/aktuel",
+    # },
+    # "saglik": {
+    #     "name": "SAĞLIK",
+    #     "url": f"{BASE_URL}/saglik",
+    # },
+    # "cevre": {
+    #     "name": "ÇEVRE",
+    #     "url": f"{BASE_URL}/cevre",
+    # },
+    # "magazin": {
+    #     "name": "MAGAZİN",
+    #     "url": f"{BASE_URL}/magazin",
+    # },
+    # "kultur_sanat": {
+    #     "name": "KÜLTÜR SANAT",
+    #     "url": f"{BASE_URL}/kultur-sanat",
+    # },
+    # "egitim": {
+    #     "name": "EĞİTİM",
+    #     "url": f"{BASE_URL}/egitim",
+    # },
+    # "teknoloji": {
+    #     "name": "TEKNOLOJİ",
+    #     "url": f"{BASE_URL}/teknoloji",
+    # },
+    # "yerel": {
+    #     "name": "YEREL",
+    #     "url": f"{BASE_URL}/yerel",
+    # },
+    "video": {
+        "name": "VIDEO", 
+        "url": f"{BASE_URL}/video"},
+    "foto": {
+        "name": "FOTO GALERİ", 
+        "url": f"{BASE_URL}/foto"},
 }
 
 # ---------------------------------------------------------------------
@@ -114,6 +120,103 @@ SESSION.headers.update(
 #  YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------------------
 
+def normalize_media_url(src: str) -> str:
+    src = (src or "").strip()
+    if not src:
+        return ""
+
+    # protocol-relative //something
+    if src.startswith("//"):
+        src = "https:" + src
+    # root-relative /path
+    elif src.startswith("/"):
+        src = urljoin(BASE_URL, src)
+
+    return src
+
+
+def looks_like_image(url: str) -> bool:
+    return bool(re.search(r"\.(jpg|jpeg|png|gif|webp)(\?|$)", url, re.IGNORECASE))
+
+
+def looks_like_video(url: str) -> bool:
+    return bool(re.search(r"\.(mp4|webm|m3u8)(\?|$)", url, re.IGNORECASE))
+
+
+def is_layout_asset(url: str) -> bool:
+    """
+    Logo, ikon, sprite gibi her haberde tekrarlanan şeyleri kaba filtrele.
+    (Gerekiyorsa sonra daha da sıkılaştırırız.)
+    """
+    lower = url.lower()
+    if any(word in lower for word in ["logo", "icon", "sprite", "favicon", "placeholder"]):
+        return True
+    if lower.endswith(".svg") or lower.endswith(".ico"):
+        return True
+    return False
+
+
+def extract_media_links(soup: BeautifulSoup) -> List[str]:
+    """
+    Haber sayfasındaki görsel + video linklerini toplar.
+    Önce main/article içinde arar, yoksa tüm sayfaya bakar.
+    """
+    root = soup.find("main") or soup.find("article") or soup
+
+    media: List[str] = []
+    seen: Set[str] = set()
+
+    # IMG
+    for img in root.find_all("img"):
+        src = img.get("data-src") or img.get("src")
+        if not src:
+            continue
+        url = normalize_media_url(src)
+        if not url:
+            continue
+        if is_layout_asset(url):
+            continue
+        if not looks_like_image(url):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        media.append(url)
+
+    # VIDEO + SOURCE
+    for video in root.find_all("video"):
+        vsrc = video.get("src")
+        if vsrc:
+            url = normalize_media_url(vsrc)
+            if looks_like_video(url) and url not in seen:
+                seen.add(url)
+                media.append(url)
+
+        for source in video.find_all("source"):
+            ssrc = source.get("src")
+            if not ssrc:
+                continue
+            url = normalize_media_url(ssrc)
+            if looks_like_video(url) and url not in seen:
+                seen.add(url)
+                media.append(url)
+
+    # IFRAMES (gömülü player'lar)
+    for iframe in root.find_all("iframe"):
+        isrc = iframe.get("src")
+        if not isrc:
+            continue
+        url = normalize_media_url(isrc)
+        if is_layout_asset(url):
+            continue
+        if looks_like_video(url) or "player" in url.lower() or "embed" in url.lower():
+            if url not in seen:
+                seen.add(url)
+                media.append(url)
+
+    return media
+
+
 
 def get_soup(url: str) -> BeautifulSoup | None:
     try:
@@ -126,17 +229,7 @@ def get_soup(url: str) -> BeautifulSoup | None:
 
 
 def is_article_url(url: str) -> bool:
-    """
-    IHA haber URL'leri için gevşek kural:
-      - domain 'iha.com.tr' içerecek
-      - path son parçası '-<rakamlar>' ile bitecek
-        örn: .../yasli-adami-...-331466170
-    """
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-
+    parsed = urlparse(url)
     if BASE_DOMAIN not in (parsed.netloc or ""):
         return False
 
@@ -145,11 +238,17 @@ def is_article_url(url: str) -> bool:
         return False
 
     last = path.split("/")[-1]
+    # allow normal articles ending with digits
     parts = last.split("-")
-    if len(parts) < 2:
-        return False
+    if parts[-1].isdigit():
+        return True
 
-    return parts[-1].isdigit()
+    # ALSO allow video/foto slug patterns e.g. starting with 'video-' or 'foto-'
+    if last.startswith("video") or last.startswith("foto"):
+        return True
+
+    return False
+
 
 
 def extract_article_links(listing_url: str, soup: BeautifulSoup) -> Set[str]:
@@ -254,12 +353,16 @@ def parse_article(url: str, soup: BeautifulSoup) -> Dict[str, str]:
 
     body = "\n\n".join(body_texts)
 
+    # Medya linkleri (resim + video)
+    media_links = extract_media_links(soup)
+
     return {
         "url": url,
         "title": title,
         "date_time": date_time,
         "city": city,
         "body": body,
+        "media_links": media_links,
     }
 
 
@@ -351,6 +454,7 @@ def crawl_category(
                 "title": data["title"],
                 "city": data["city"],
                 "body": data["body"],
+                "media_links": data.get("media_links", []),
             }
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             fetched_here += 1
