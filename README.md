@@ -1,11 +1,10 @@
-# News-Scraper
+# News Scraper
 
 
-## IHA Run:
+### IHA Run:
 ```
-    cd iha
-    docker build -t iha-scraper .
     mkdir -p iha_output
+    docker build -t iha-scraper iha/
 
     docker run --rm \
     -v "$(pwd)/iha_output:/app/output" \
@@ -14,11 +13,10 @@
 
 
 
-## DHA Run:
+### DHA Run:
 ```
-    cd dha
     mkdir -p dha_output
-    docker build -t dha-scraper .
+    docker build -t dha-scraper dha/
 
     docker run --rm \
     -v "$(pwd)/dha_output:/app/output" \

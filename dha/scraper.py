@@ -126,6 +126,31 @@ def looks_like_image(url: str) -> bool:
 def looks_like_video(url: str) -> bool:
     return bool(re.search(r"\.(mp4|webm|m3u8)(\?|$)", url, re.IGNORECASE))
 
+VIDEO_URL_CANDIDATE = re.compile(r'https?://[^\s"\'<>]+', re.IGNORECASE)
+
+def extract_video_embed_urls_from_html(html: str) -> List[str]:
+    """Best-effort: scan raw HTML for embed/player/video URLs."""
+    urls: List[str] = []
+    seen: Set[str] = set()
+
+    for m in VIDEO_URL_CANDIDATE.finditer(html):
+        u = m.group(0)
+
+        # Normalize relative-ish weirdness if it ever happens
+        u = normalize_url(u)
+
+        low = u.lower()
+        # Accept real video files or obvious players/embeds
+        if looks_like_video(u) or "embed" in low or "player" in low:
+            key = canonical_media_key(u)
+            if key in seen:
+                continue
+            seen.add(key)
+            urls.append(u)
+
+    return urls
+
+
 
 def extract_media_links(soup: BeautifulSoup) -> List[str]:
     media: List[str] = []
@@ -227,12 +252,28 @@ def parse_article(url: str, html: str, category_slug: str) -> Dict[str, object]:
     # MEDYA LİNKLERİ
     media_links = extract_media_links(soup)
 
+    if category_slug == "video":
+        filtered = []
+        for u in media_links:
+            if looks_like_video(u):
+                filtered.append(u)
+            else:
+                low = u.lower()
+                if "embed" in low or "player" in low or "video" in low:
+                    filtered.append(u)
+
+        if not filtered:
+            extra = extract_video_embed_urls_from_html(html)
+            filtered.extend(extra)
+
+        media_links = filtered
+
     return {
         "category": category,
         "category_slug": category_slug,
         "date_time": date_time,
         "url": url,
-        "title": title,        
+        "title": title,
         "city": city,
         "body": body,
         "media_links": media_links,
