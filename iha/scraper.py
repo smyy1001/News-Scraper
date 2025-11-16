@@ -17,7 +17,6 @@ from bs4 import BeautifulSoup
 BASE_DOMAIN = "iha.com.tr"
 BASE_URL = f"https://www.{BASE_DOMAIN}"
 
-# slug -> {name (insan okunur), url (listing)}
 CATEGORIES: Dict[str, Dict[str, str]] = {
     "gundem": {
         "name": "GÜNDEM",
@@ -84,23 +83,21 @@ CATEGORIES: Dict[str, Dict[str, str]] = {
 }
 
 # ---------------------------------------------------------------------
-#  AYARLAR (ENV)
+#  AYARLAR
 # ---------------------------------------------------------------------
 
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "output")
+OUTPUT_DIR = "output"
 
-_raw_limit = os.environ.get("MAX_ARTICLES", "300")
+_raw_limit = "0"
 try:
     MAX_ARTICLES = int(_raw_limit)
 except ValueError:
     MAX_ARTICLES = 300
 
-# None -> limitsiz (kategori sayfaları bitene kadar)
 ARTICLE_LIMIT: int | None = None if MAX_ARTICLES <= 0 else MAX_ARTICLES
 
-REQUEST_DELAY = float(os.environ.get("REQUEST_DELAY", "0.7"))
-MAX_LISTING_PAGES = int(os.environ.get("MAX_LISTING_PAGES", "2000"))
-
+REQUEST_DELAY = float("0.7")
+MAX_LISTING_PAGES = int("2000")
 # ---------------------------------------------------------------------
 #  HTTP SESSION
 # ---------------------------------------------------------------------
@@ -124,11 +121,8 @@ def normalize_media_url(src: str) -> str:
     src = (src or "").strip()
     if not src:
         return ""
-
-    # protocol-relative //something
     if src.startswith("//"):
         src = "https:" + src
-    # root-relative /path
     elif src.startswith("/"):
         src = urljoin(BASE_URL, src)
 
@@ -144,10 +138,6 @@ def looks_like_video(url: str) -> bool:
 
 
 def is_layout_asset(url: str) -> bool:
-    """
-    Logo, ikon, sprite gibi her haberde tekrarlanan şeyleri kaba filtrele.
-    (Gerekiyorsa sonra daha da sıkılaştırırız.)
-    """
     lower = url.lower()
     if any(word in lower for word in ["logo", "icon", "sprite", "favicon", "placeholder"]):
         return True
@@ -157,14 +147,6 @@ def is_layout_asset(url: str) -> bool:
 
 
 def extract_media_links(soup: BeautifulSoup, only_videos: bool = False) -> List[str]:
-    """
-    Haber sayfasındaki görsel + video linklerini toplar.
-
-    - Eğer only_videos=False:
-        img + video + iframe + script içindeki tüm URL'leri (resim + video) toplar.
-    - Eğer only_videos=True:
-        SADECE video linkleri (mp4/m3u8/webm) toplanır; img'ler tamamen ignore edilir.
-    """
     root = soup.find("main") or soup.find("article") or soup
 
     media: List[str] = []
@@ -174,7 +156,6 @@ def extract_media_links(soup: BeautifulSoup, only_videos: bool = False) -> List[
         url = normalize_media_url(raw)
         if not url:
             return
-        # video-only modda: görüntü değil, sadece video uzantılı URL'leri al
         if only_videos and not looks_like_video(url):
             return
         if url in seen:
@@ -185,7 +166,6 @@ def extract_media_links(soup: BeautifulSoup, only_videos: bool = False) -> List[
     # 1) IMG
     for img in root.find_all("img"):
         if only_videos:
-            # video kategorisinde img istemiyoruz
             continue
         src = img.get("data-src") or img.get("src")
         if not src:
@@ -210,7 +190,6 @@ def extract_media_links(soup: BeautifulSoup, only_videos: bool = False) -> List[
         isrc = iframe.get("src")
         if not isrc:
             continue
-        # iframe'den video almak istiyorsak:
         if looks_like_video(isrc) or "player" in isrc.lower() or "embed" in isrc.lower():
             add_url(isrc)
 
@@ -225,7 +204,6 @@ def extract_media_links(soup: BeautifulSoup, only_videos: bool = False) -> List[
             for v in vals:
                 if not isinstance(v, str):
                     continue
-                # video uzantısı içeriyorsa
                 if ".mp4" in v or ".m3u8" in v or ".webm" in v:
                     add_url(v)
 
@@ -266,12 +244,10 @@ def is_article_url(url: str) -> bool:
         return False
 
     last = path.split("/")[-1]
-    # allow normal articles ending with digits
     parts = last.split("-")
     if parts[-1].isdigit():
         return True
 
-    # ALSO allow video/foto slug patterns e.g. starting with 'video-' or 'foto-'
     if last.startswith("video") or last.startswith("foto"):
         return True
 
@@ -290,11 +266,6 @@ def extract_article_links(listing_url: str, soup: BeautifulSoup) -> Set[str]:
 
 
 def extract_pagination_links(start_url: str, listing_url: str, soup: BeautifulSoup) -> Set[str]:
-    """
-    Kategori sayfalarındaki diğer sayfaları yakalamak için:
-      /gundem/2.sayfa.html vb.
-    Sadece ilgili kategori ağacının altında olan sayfaları alıyoruz.
-    """
     pages: Set[str] = set()
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -307,10 +278,6 @@ def extract_pagination_links(start_url: str, listing_url: str, soup: BeautifulSo
 
 
 def extract_city_from_url(url: str) -> str:
-    """
-    https://www.iha.com.tr/adana-haberleri/...  -> 'adana'
-    https://www.iha.com.tr/zonguldak-haberleri/... -> 'zonguldak'
-    """
     try:
         parsed = urlparse(url)
     except Exception:
@@ -325,12 +292,6 @@ def extract_city_from_url(url: str) -> str:
 
 
 def parse_date_time(soup: BeautifulSoup) -> str:
-    """
-    Yayın tarih/saat bilgisini almaya çalış:
-      1) Meta tag'lerden
-      2) Full text içinde '15 Kasım 2025 ... 17:21' benzeri pattern ile
-    """
-    # 1) Meta
     meta_time = (
         soup.find("meta", attrs={"property": "article:published_time"})
         or soup.find("meta", attrs={"itemprop": "datePublished"})
@@ -340,9 +301,7 @@ def parse_date_time(soup: BeautifulSoup) -> str:
     if meta_time and meta_time.get("content"):
         return meta_time["content"].strip()
 
-    # 2) Full text regex (Türkçe ay isimleri vs. çok kasarız diye daha gevşek tutuyoruz)
     full_text = soup.get_text("\n", strip=True)
-    # Örn: '15 Kasım 2025 Cumartesi 17:21'
     dt_regex = re.compile(
         r"\b(\d{1,2}\s+[A-Za-zÇĞİÖŞÜçğıöşü]+\s+20\d{2}[^0-9]{0,30}\d{1,2}:\d{2})\b"
     )
@@ -381,13 +340,12 @@ def parse_article(url: str, soup: BeautifulSoup) -> Dict[str, str]:
 
     body = "\n\n".join(body_texts)
 
-    # Bu sayfa bir video detayı mı?
     try:
         parsed = urlparse(url)
         path = (parsed.path or "").strip("/")
     except Exception:
         path = ""
-    is_video_page = path.startswith("video")  # örn: 'video-diyarbakirda-...'
+    is_video_page = path.startswith("video")
 
     # Medya linkleri
     media_links = extract_media_links(soup, only_videos=is_video_page)
@@ -429,10 +387,6 @@ def crawl_category(
     global_seen_urls: Set[str],
     global_start_count: int,
 ) -> int:
-    """
-    Tek bir kategoriyi (örneğin GÜNDEM) crawl eder.
-    Geriye bu kategoride kaç yeni haber yazdığını döner.
-    """
     visited_listing: Set[str] = set()
     listing_queue: List[str] = [start_url]
 
@@ -454,23 +408,19 @@ def crawl_category(
         if soup is None:
             continue
 
-        # Bu listing sayfasındaki haber linklerini topla
         new_article_links = extract_article_links(listing_url, soup)
         print(
             f"[INFO]   found {len(new_article_links)} article links "
             f"(before dedup: {len(new_article_links)})"
         )
 
-        # Sayfa sayfa pagination linkleri
         new_pages = extract_pagination_links(start_url, listing_url, soup)
         for p in new_pages:
             if p not in visited_listing and p not in listing_queue:
                 listing_queue.append(p)
 
-        # Haberleri çek
         fh = get_file_handle(cat_slug, category_files)
         for article_url in sorted(new_article_links):
-            # Global dedup: aynı url'yi başka kategoriden görürsek tekrar çekmeyelim
             if article_url in global_seen_urls:
                 continue
 
@@ -515,7 +465,7 @@ def crawl():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     category_files: Dict[str, TextIO] = {}
-    global_seen_urls: Set[str] = set()  # tüm kategoriler arası dedup
+    global_seen_urls: Set[str] = set()
     total_fetched = 0
 
     try:
@@ -539,7 +489,6 @@ def crawl():
 
         print(f"[INFO] ALL DONE. Total articles fetched: {total_fetched}")
     finally:
-        # Dosyaları kapat
         for fh in category_files.values():
             try:
                 fh.close()

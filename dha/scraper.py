@@ -9,7 +9,9 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.dha.com.tr"
 
-# Ana haber kategorileri
+# ---------------------------------------------------------------------
+#  Kategoriler
+# ---------------------------------------------------------------------
 CATEGORIES: Dict[str, str] = {
     "son-dakika": "Son Dakika",
     "gundem": "Gündem",
@@ -26,17 +28,22 @@ CATEGORIES: Dict[str, str] = {
     "video": "Video",
 }
 
-# Basit config (ENV’den override edebilirsin)
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "output")
-MAX_PER_CATEGORY = int(os.environ.get("MAX_PER_CATEGORY", "0"))  # 0 = limitsiz
-MAX_PAGES_PER_CATEGORY = int(os.environ.get("MAX_PAGES_PER_CATEGORY", "50"))
-REQUEST_DELAY = float(os.environ.get("REQUEST_DELAY", "0.3"))
+# ---------------------------------------------------------------------
+#  AYARLAR
+# ---------------------------------------------------------------------
+OUTPUT_DIR = "output"
+MAX_PER_CATEGORY = 0
+MAX_PAGES_PER_CATEGORY = 50
+REQUEST_DELAY = 0.3
 
+# ---------------------------------------------------------------------
+#  HTTP SESSION
+# ---------------------------------------------------------------------
 session = requests.Session()
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; dha-scraper/1.0; +https://example.com)"
 })
-
+# ---------------------------------------------------------------------
 
 
 def fetch(url: str) -> Optional[str]:
@@ -53,34 +60,21 @@ def fetch(url: str) -> Optional[str]:
     
 
 def extract_article_links(html: str, category_slug: str) -> List[str]:
-    """
-    Kategori listing HTML’inden haber linklerini çıkarır.
-    - son-dakika: genel pattern
-    - foto-galeri: sadece /foto-galeri/... linkleri
-    - video: sadece /video/... linkleri
-    - diğerleri: /{kategori_slug}/... linkleri, galeri linkleri hariç
-    """
     links: List[str] = []
 
     if category_slug == "son-dakika":
-        # /...-123456 gibi biten haber linkleri
         pattern = re.compile(r'href="(/[^"]+?-\\d+)"')
     elif category_slug in {"foto-galeri", "video"}:
-        # sadece ilgili galeri tipini yakala
         pattern = re.compile(r'href="(/%s/[^"#]+)"' % re.escape(category_slug))
     else:
-        # klasik metin haber kategorileri
         pattern = re.compile(r'href="(/%s/[^"]+)"' % re.escape(category_slug))
 
     for m in pattern.finditer(html):
         href = m.group(1)
 
-        # javascript vs içeren sahte linkleri atla
         if "javascript:" in href:
             continue
 
-        # ❗ Normal kategorilerde hâlâ galeri linklerini atlıyoruz,
-        # ama foto-galeri ve video kategorilerinde asla atlamıyoruz.
         if category_slug not in {"foto-galeri", "video"}:
             if "/foto-galeri/" in href or "/video/" in href or "/galeri/" in href:
                 continue
@@ -88,7 +82,6 @@ def extract_article_links(html: str, category_slug: str) -> List[str]:
         full = BASE_URL + href
         links.append(full)
 
-    # Sıralamayı koruyarak duplicate temizle
     seen: Set[str] = set()
     deduped: List[str] = []
     for u in links:
@@ -104,40 +97,24 @@ def normalize_url(src: str) -> str:
     if not src:
         return ""
 
-    # protocol-relative //something
     if src.startswith("//"):
         src = "https:" + src
-    # relative /path
     elif src.startswith("/"):
         src = BASE_URL + src
 
     return src
 
 def canonical_media_key(url: str) -> str:
-    """
-    Same-image dedup key.
-
-    For DHA image CDN URLs like:
-        https://image.dha.com.tr/i/dha/75/0x410/6919e55ca322c59cc784ccd0.jpg
-        https://image.dha.com.tr/i/dha/75/0x350/6919e55ca322c59cc784ccd0.jpg
-
-    we drop the size segment (0x410 / 0x350) so both map to:
-        image.dha.com.tr/i/dha/6919e55ca322c59cc784ccd0.jpg
-    """
     parsed = urlparse(url)
     host = parsed.netloc
     path = parsed.path or ""
 
-    # Strip query/fragment differences
-    # Only path + host matter for dedup.
     if host == "image.dha.com.tr":
-        parts = path.split("/")   # ["", "i", "dha", "75", "0x410", "hash.jpg"]
+        parts = path.split("/")
         if len(parts) >= 6 and parts[1] == "i" and parts[2] == "dha":
-            # keep only last segment as identity (hash + extension)
             last = parts[-1]
             path = "/i/dha/" + last
 
-    # For other hosts, just use the path as-is
     return f"{host}{path}"
 
 
@@ -203,7 +180,6 @@ def extract_media_links(soup: BeautifulSoup) -> List[str]:
         if not isrc:
             continue
         url = normalize_url(isrc)
-        # eğer video player / embed ise tutmak isteyebilirsin
         if looks_like_video(url) or "player" in url.lower() or "embed" in url.lower():
             key = canonical_media_key(url)
             if key in seen_keys:
@@ -306,7 +282,6 @@ def crawl_category(category_slug: str, seen_urls: Set[str]) -> None:
                 count += 1
                 print(f"[INFO]     saved {article_url}")
 
-        # Sayfa nerdeyse boşsa muhtemelen sonlara geldik
         if len(new_links) < 3:
             print(f"[INFO] [{category_slug}] very few new links, probably end. stop.")
             break
@@ -320,7 +295,6 @@ def main():
     print(f"[INFO] Max pages per category: {MAX_PAGES_PER_CATEGORY}")
     print(f"[INFO] Categories: {', '.join(CATEGORIES.keys())}")
 
-    # Global duplicate kontrolü: aynı haber hem Son Dakika’da hem kendi kategorisinde görünürse
     seen_urls: Set[str] = set()
 
     for slug in CATEGORIES.keys():
