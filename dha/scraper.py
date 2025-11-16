@@ -3,7 +3,7 @@ import re
 import json
 import time
 from typing import Dict, List, Set, Optional
-
+from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
@@ -34,6 +34,8 @@ session = requests.Session()
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; dha-scraper/1.0; +https://example.com)"
 })
+
+category_seen_keys: Set[str] = set()
 
 
 def fetch(url: str) -> Optional[str]:
@@ -66,8 +68,8 @@ def extract_article_links(html: str, category_slug: str) -> List[str]:
 
     for m in pattern.finditer(html):
         href = m.group(1)
-        # Foto / video galeri, vb. ele
-        if "/foto-" in href or "/video-" in href or "/galeri" in href:
+        # Foto / video galeri, vb. ele (sadece klasik yazılı haber istiyoruz)
+        if "/foto-galeri/" in href or "/video/" in href or "/galeri/" in href:
             continue
         full = BASE_URL + href
         links.append(full)
@@ -82,7 +84,126 @@ def extract_article_links(html: str, category_slug: str) -> List[str]:
     return deduped
 
 
-def parse_article(url: str, html: str, category_slug: str) -> Dict[str, str]:
+def normalize_url(src: str) -> str:
+    src = src.strip()
+    if not src:
+        return ""
+
+    # protocol-relative //something
+    if src.startswith("//"):
+        src = "https:" + src
+    # relative /path
+    elif src.startswith("/"):
+        src = BASE_URL + src
+
+    return src
+
+def canonical_media_key(url: str) -> str:
+    """
+    Same-image dedup key.
+
+    For DHA image CDN URLs like:
+        https://image.dha.com.tr/i/dha/75/0x410/6919e55ca322c59cc784ccd0.jpg
+        https://image.dha.com.tr/i/dha/75/0x350/6919e55ca322c59cc784ccd0.jpg
+
+    we drop the size segment (0x410 / 0x350) so both map to:
+        image.dha.com.tr/i/dha/6919e55ca322c59cc784ccd0.jpg
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc
+    path = parsed.path or ""
+
+    # Strip query/fragment differences
+    # Only path + host matter for dedup.
+    if host == "image.dha.com.tr":
+        parts = path.split("/")   # ["", "i", "dha", "75", "0x410", "hash.jpg"]
+        if len(parts) >= 6 and parts[1] == "i" and parts[2] == "dha":
+            # keep only last segment as identity (hash + extension)
+            last = parts[-1]
+            path = "/i/dha/" + last
+
+    # For other hosts, just use the path as-is
+    return f"{host}{path}"
+
+
+
+def looks_like_image(url: str) -> bool:
+    return bool(re.search(r"\.(jpg|jpeg|png|gif|webp)(\?|$)", url, re.IGNORECASE))
+
+
+def looks_like_video(url: str) -> bool:
+    return bool(re.search(r"\.(mp4|webm|m3u8)(\?|$)", url, re.IGNORECASE))
+
+
+def extract_media_links(soup: BeautifulSoup) -> List[str]:
+    media: List[str] = []
+    seen_keys: Set[str] = set()
+
+    # IMG
+    for img in soup.find_all("img"):
+        src = img.get("data-src") or img.get("src")
+        if not src:
+            continue
+        url = normalize_url(src)
+        if not url:
+            continue
+        if not looks_like_image(url):
+            continue
+
+        key = canonical_media_key(url)
+        if key in seen_keys or key in category_seen_keys:
+            continue
+
+        category_seen_keys.add(key)
+        seen_keys.add(key)
+        media.append(url)
+
+    # VIDEO + SOURCE
+    for video in soup.find_all("video"):
+        vsrc = video.get("src")
+        if vsrc:
+            url = normalize_url(vsrc)
+            if looks_like_video(url):
+                key = canonical_media_key(url)
+                if key not in seen_keys and key not in category_seen_keys:
+                    seen_keys.add(key)
+                    category_seen_keys.add(key)
+                    media.append(url)
+
+        for source in video.find_all("source"):
+            ssrc = source.get("src")
+            if not ssrc:
+                continue
+            url = normalize_url(ssrc)
+            if not looks_like_video(url):
+                continue
+            key = canonical_media_key(url)
+            if key in seen_keys or key in category_seen_keys:
+                continue
+        
+            category_seen_keys.add(key)
+            seen_keys.add(key)
+            media.append(url)
+
+    # IFRAMES
+    for iframe in soup.find_all("iframe"):
+        isrc = iframe.get("src")
+        if not isrc:
+            continue
+        url = normalize_url(isrc)
+        # eğer video player / embed ise tutmak isteyebilirsin
+        if looks_like_video(url) or "player" in url.lower() or "embed" in url.lower():
+            key = canonical_media_key(url)
+            if key in seen_keys or key in category_seen_keys:
+                continue
+            seen_keys.add(key)
+            category_seen_keys.add(key)
+            media.append(url)
+
+    return media
+
+
+def parse_article(url: str, html: str, category_slug: str) -> Dict[str, object]:
     soup = BeautifulSoup(html, "html.parser")
 
     # Başlık
@@ -116,6 +237,9 @@ def parse_article(url: str, html: str, category_slug: str) -> Dict[str, str]:
 
     body = "\n\n".join(body_parts)
 
+    # MEDYA LİNKLERİ
+    media_links = extract_media_links(soup)
+
     return {
         "url": url,
         "title": title,
@@ -124,6 +248,7 @@ def parse_article(url: str, html: str, category_slug: str) -> Dict[str, str]:
         "date_time": date_time,
         "city": city,
         "body": body,
+        "media_links": media_links,
     }
 
 
